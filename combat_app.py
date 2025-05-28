@@ -291,7 +291,7 @@ if st.button("Adjudicate Day"):
                     else:
                         prep_def = 1
                     scaling = cp_scale
-                    final = adv_cp * effort * prep_def * scaling
+                    final = adv_cp * effort * prep_def * scaling * degraded_size/100
                     return {
                         "Unit Size": base_size,
                         "Strength-Adjusted Size": degraded_size,
