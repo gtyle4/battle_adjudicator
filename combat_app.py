@@ -73,7 +73,7 @@ def aggregate_force_advantaged(combat_power_df, my_units, opp_units, advantage_r
 def adjudicate_day(
     combat_power_df, blue_selected, red_selected,
     rate_of_effort=1.0, blue_posture='Attack', prepared_defense=False,
-    day_length=1.0, cp_scale=0.33, advantage_rules=None):
+    day_length=1.0, cp_scale=0.2, advantage_rules=None):
 
     blue_units = [u for u, s in blue_selected]
     red_units  = [u for u, s in red_selected]
@@ -347,7 +347,7 @@ if st.button("Adjudicate Day"):
             breakdown_df = combat_power_breakdown(
                 combat_power, blue_selected, red_selected,
                 rate_of_effort=roe, blue_posture=posture, prepared_defense=prepared_def,
-                cp_scale=0.33, advantage_rules=advantage_rules
+                cp_scale=0.2, advantage_rules=advantage_rules
             )
 
             st.write("### Combat Power Breakdown")
