@@ -1,6 +1,7 @@
 import math
 import pandas as pd
 import streamlit as st
+import altair as alt
 
 # --- Functions ---
 def square_law(x0, y0, a, b):
@@ -27,7 +28,10 @@ def parse_tags(tag_string):
         return []
     return [tag.strip() for tag in str(tag_string).split(',')]
 
-def aggregate_force_advantaged(combat_power_df, my_units, opp_units, advantage_rules, strength_dict=None, opp_strength_dict=None):
+def aggregate_force_advantaged(
+    combat_power_df, my_units, opp_units, advantage_rules,
+    strength_dict=None, opp_strength_dict=None, unit_effort_dict=None):
+
     subset = combat_power_df[combat_power_df['Unit'].isin(my_units)].copy()
     opp_subset = combat_power_df[combat_power_df['Unit'].isin(opp_units)].copy()
 
@@ -49,6 +53,8 @@ def aggregate_force_advantaged(combat_power_df, my_units, opp_units, advantage_r
         my_cp = my_row['Combat Power']
         my_tags = my_row['Tags']
         my_size = my_row['Adj_Size']
+        my_unit = my_row['Unit']
+        my_effort = unit_effort_dict.get(my_unit, 1.0) if unit_effort_dict else 1.0
 
         opp_total_size = opp_subset['Adj_Size'].sum()
         if opp_total_size == 0:
@@ -65,24 +71,27 @@ def aggregate_force_advantaged(combat_power_df, my_units, opp_units, advantage_r
                 weighted_multipliers.append(pair_max * opp_size)
             avg_multiplier = sum(weighted_multipliers) / opp_total_size
 
-        effective_cp_total += my_cp * my_size * avg_multiplier
+        effective_cp_total += my_cp * my_size * avg_multiplier * my_effort
 
     weighted_cp = effective_cp_total / total_size
     return total_size, weighted_cp
 
 def adjudicate_day(
     combat_power_df, blue_selected, red_selected,
-    rate_of_effort=1.0, blue_posture='Attack', prepared_defense=False,
+    blue_posture='Attack', prepared_defense=False,
     day_length=1.0, cp_scale=0.2, advantage_rules=None):
 
-    blue_units = [u for u, s in blue_selected]
+    # blue_selected: [(unit, pct, roe)], red_selected: [(unit, pct)]
+    blue_units = [u for u, s, r in blue_selected]
+    blue_strengths = {u: s for u, s, r in blue_selected}
+    blue_effort = {u: r for u, s, r in blue_selected}
     red_units  = [u for u, s in red_selected]
-    blue_strengths = {u: s for u, s in blue_selected}
     red_strengths  = {u: s for u, s in red_selected}
 
     blue_size, blue_cp = aggregate_force_advantaged(
         combat_power_df, blue_units, red_units, advantage_rules,
-        strength_dict=blue_strengths, opp_strength_dict=red_strengths
+        strength_dict=blue_strengths, opp_strength_dict=red_strengths,
+        unit_effort_dict=blue_effort
     )
     red_size, red_cp = aggregate_force_advantaged(
         combat_power_df, red_units, blue_units, advantage_rules,
@@ -101,7 +110,7 @@ def adjudicate_day(
 
     outcome = square_law(
         blue_size, red_size,
-        blue_cp * rate_of_effort * blue_cp_multiplier * cp_scale,
+        blue_cp * blue_cp_multiplier * cp_scale,
         red_cp * red_cp_multiplier * cp_scale
     )
     if outcome is None:
@@ -124,8 +133,12 @@ def get_per_unit_survivors(selected_units, total_size, survivors):
     """Distribute survivors proportionally across units."""
     per_unit = []
     if total_size == 0:
-        return [(unit, 0, 0) for unit, size in selected_units]
-    for unit, pct in selected_units:
+        return [(unit, 0, 0) for *unit_tuple in selected_units for unit in [unit_tuple[0]]]
+    for unit_tuple in selected_units:
+        if len(unit_tuple) == 3:
+            unit, pct, _ = unit_tuple
+        else:
+            unit, pct = unit_tuple
         unit_row = combat_power[combat_power['Unit'] == unit].iloc[0]
         effective_size = unit_row['Size'] * pct / 100.0
         remaining = effective_size * survivors / total_size
@@ -189,31 +202,40 @@ red_unit_names  = combat_power[combat_power['Unit'].str.contains('Red_', case=Fa
 # --- Sidebar setup ---
 st.sidebar.header("Force Selection")
 
-def per_side_unit_selection(unit_names, color):
+def per_side_unit_selection(unit_names, color, effort_per_unit=False):
     selected = []
     st.sidebar.subheader(f"{color} Units")
     for unit in unit_names:
         strength_key = f"{color.lower()}_strength_{unit}"
         check_key = f"{color.lower()}_check_{unit}"
-        cols = st.sidebar.columns([2, 1])  # Make the number box area much wider
+        cols = st.sidebar.columns([2, 1])
         checked = cols[0].checkbox(unit, value=False, key=check_key)
         pct = cols[1].number_input(
             "", min_value=0.0, max_value=999.0, value=100.0, step=1.0, key=strength_key,
             label_visibility="collapsed", format="%.0f"
         )
         if checked:
-            selected.append((unit, pct))
+            if effort_per_unit:
+                effort_opt = st.sidebar.selectbox(
+                    f"Effort: {unit}",
+                    ['Low', 'Medium', 'High', 'Custom'],
+                    key=f"{color.lower()}_effort_{unit}"
+                )
+                roe_dict = {'Low': 0.5, 'Medium': 1.0, 'High': 2.0}
+                roe_val = st.sidebar.number_input(
+                    f"Custom ROE: {unit}",
+                    value=1.0,
+                    key=f"{color.lower()}_roe_custom_{unit}"
+                ) if effort_opt == 'Custom' else roe_dict[effort_opt]
+                selected.append((unit, pct, roe_val))
+            else:
+                selected.append((unit, pct))
     return selected
 
-
-
-blue_selected = per_side_unit_selection(blue_unit_names, "Blue")
-red_selected = per_side_unit_selection(red_unit_names, "Red")
+blue_selected = per_side_unit_selection(blue_unit_names, "Blue", effort_per_unit=True)
+red_selected = per_side_unit_selection(red_unit_names, "Red", effort_per_unit=False)
 
 st.sidebar.markdown("---")
-effort = st.sidebar.selectbox("Blue Rate of Effort", ['Low', 'Medium', 'High', 'Custom'])
-roe_dict = {'Low': 0.5, 'Medium': 1.0, 'High': 2.0}
-roe = st.sidebar.number_input("Custom Rate of Effort", value=1.0) if effort == 'Custom' else roe_dict[effort]
 posture = st.sidebar.radio("Blue Posture", ['Attack', 'Defend'])
 prepared_def = st.sidebar.checkbox("Prepared to Defend", value=False)
 
@@ -226,9 +248,8 @@ if st.button("Adjudicate Day"):
     else:
         result = adjudicate_day(
             combat_power,
-            blue_selected,
+            blue_selected,  # now includes per-unit ROE
             red_selected,
-            rate_of_effort=roe,
             blue_posture=posture,
             prepared_defense=prepared_def,
             advantage_rules=advantage_rules
@@ -236,7 +257,7 @@ if st.button("Adjudicate Day"):
         if result is None:
             st.error("One or both sides have zero strength.")
         else:
-            blue_total = sum([combat_power[combat_power['Unit'] == unit].iloc[0]['Size'] * pct/100.0 for unit, pct in blue_selected])
+            blue_total = sum([combat_power[combat_power['Unit'] == unit].iloc[0]['Size'] * pct/100.0 for unit, pct, _ in blue_selected])
             red_total = sum([combat_power[combat_power['Unit'] == unit].iloc[0]['Size'] * pct/100.0 for unit, pct in red_selected])
 
             blue_per_unit = get_per_unit_survivors(blue_selected, blue_total, result['blue_survivors'])
@@ -256,22 +277,30 @@ if st.button("Adjudicate Day"):
 
             # ---- Visualization: Combat Power Breakdown ----
 
-            import altair as alt
-
             def combat_power_breakdown(
                 combat_power_df, blue_selected, red_selected,
-                rate_of_effort, blue_posture, prepared_defense,
+                blue_posture, prepared_defense,
                 cp_scale, advantage_rules
             ):
                 def side_stats(selected, opp_selected, side, is_blue):
-                    unit_names = [u for u, s in selected]
-                    strengths = {u: s for u, s in selected}
-                    opp_names = [u for u, s in opp_selected]
+                    if is_blue:
+                        # blue_selected = (unit, pct, roe)
+                        unit_names = [u for u, s, r in selected]
+                        strengths = {u: s for u, s, r in selected}
+                        efforts = {u: r for u, s, r in selected}
+                    else:
+                        unit_names = [u for u, s in selected]
+                        strengths = {u: s for u, s in selected}
+                        efforts = None  # red doesn't get per-unit effort for now
+
+                    opp_names = [u for u, s in opp_selected] if not is_blue else [u for u, s in opp_selected]
                     opp_strengths = {u: s for u, s in opp_selected}
+
                     base_size = sum([combat_power_df[combat_power_df['Unit'] == u].iloc[0]['Size'] for u in unit_names])
                     degraded_size = sum([
                         combat_power_df[combat_power_df['Unit'] == u].iloc[0]['Size'] * strengths[u] / 100.0 for u in unit_names
                     ])
+                    # For base_cp, ignore effort
                     base_cp = (sum([
                         combat_power_df[combat_power_df['Unit'] == u].iloc[0]['Combat Power'] *
                         combat_power_df[combat_power_df['Unit'] == u].iloc[0]['Size'] *
@@ -280,10 +309,15 @@ if st.button("Adjudicate Day"):
                     opp_units = opp_names
                     adv_size, adv_cp = aggregate_force_advantaged(
                         combat_power_df, unit_names, opp_units, advantage_rules,
-                        strength_dict=strengths, opp_strength_dict=opp_strengths
+                        strength_dict=strengths, opp_strength_dict=opp_strengths,
+                        unit_effort_dict=efforts
                     )
                     advantage_multiplier = adv_cp / base_cp if base_cp else 1.0
-                    effort = rate_of_effort if is_blue else 1.0
+
+                    if is_blue:
+                        rate_of_effort = sum([efforts[u] * strengths[u] for u in unit_names]) / sum([strengths[u] for u in unit_names]) if strengths else 1.0
+                    else:
+                        rate_of_effort = 1.0
                     if is_blue and blue_posture == "Defend" and prepared_defense:
                         prep_def = 1.33
                     elif not is_blue and blue_posture == "Attack" and prepared_defense:
@@ -291,14 +325,14 @@ if st.button("Adjudicate Day"):
                     else:
                         prep_def = 1
                     scaling = cp_scale
-                    final = adv_cp * effort * prep_def * scaling * degraded_size
+                    final = adv_cp * prep_def * scaling * degraded_size
                     return {
                         "Unit Size": base_size,
                         "Strength-Adjusted Size": degraded_size,
                         "Base Combat Power": base_cp,
                         "Advantage Multiplier": advantage_multiplier,
                         "Advantaged Combat Power": adv_cp,
-                        "Rate of Effort": effort,
+                        "Rate of Effort": rate_of_effort,
                         "Prepared Defense": prep_def,
                         "Scaling": scaling,
                         "Final Effective CP": final
@@ -346,7 +380,7 @@ if st.button("Adjudicate Day"):
 
             breakdown_df = combat_power_breakdown(
                 combat_power, blue_selected, red_selected,
-                rate_of_effort=roe, blue_posture=posture, prepared_defense=prepared_def,
+                blue_posture=posture, prepared_defense=prepared_def,
                 cp_scale=0.2, advantage_rules=advantage_rules
             )
 
