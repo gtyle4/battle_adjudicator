@@ -133,7 +133,7 @@ def get_per_unit_survivors(selected_units, total_size, survivors):
     """Distribute survivors proportionally across units."""
     per_unit = []
     if total_size == 0:
-        return [(unit, 0, 0) for *unit_tuple in selected_units for unit in [unit_tuple[0]]]
+        return [(unit_tuple[0], 0, 0) for unit_tuple in selected_units]
     for unit_tuple in selected_units:
         if len(unit_tuple) == 3:
             unit, pct, _ = unit_tuple
