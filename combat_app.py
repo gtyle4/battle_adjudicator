@@ -284,7 +284,6 @@ if st.button("Adjudicate Day"):
             ):
                 def side_stats(selected, opp_selected, side, is_blue):
                     if is_blue:
-                        # blue_selected = (unit, pct, roe)
                         unit_names = [u for u, s, r in selected]
                         strengths = {u: s for u, s, r in selected}
                         efforts = {u: r for u, s, r in selected}
@@ -292,9 +291,11 @@ if st.button("Adjudicate Day"):
                         unit_names = [u for u, s in selected]
                         strengths = {u: s for u, s in selected}
                         efforts = None  # red doesn't get per-unit effort for now
+                    
+                    # Properly handle opp_selected structure for both sides:
+                    opp_names = [unit_tuple[0] for unit_tuple in opp_selected]
+                    opp_strengths = {unit_tuple[0]: unit_tuple[1] for unit_tuple in opp_selected}
 
-                    opp_names = [u for u, s in opp_selected] if not is_blue else [u for u, s in opp_selected]
-                    opp_strengths = {u: s for u, s in opp_selected}
 
                     base_size = sum([combat_power_df[combat_power_df['Unit'] == u].iloc[0]['Size'] for u in unit_names])
                     degraded_size = sum([
